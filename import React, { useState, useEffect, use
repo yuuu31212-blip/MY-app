@@ -1,0 +1,1805 @@
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { 
+  Plus, 
+  Settings, 
+  Trash2, 
+  Edit, 
+  Search, 
+  FileText, 
+  Check, 
+  AlertTriangle, 
+  Calendar, 
+  MapPin, 
+  Phone, 
+  Clock, 
+  ArrowLeft, 
+  Download, 
+  Upload, 
+  Star, 
+  ChevronDown, 
+  UserPlus, 
+  X,
+  Sparkles,
+  Smile,
+  MessageSquare,
+  ShieldCheck,
+  Zap,
+  Briefcase
+} from 'lucide-react';
+
+// MARK: - Models & Types
+
+interface Candidate {
+  id: string;
+  name: string;
+  age: number;
+  job: string;
+  phone: string;
+  address: string; // 住所
+  weekdays: string[];
+  weeklyDays: string;
+  hoursWeekday: string;
+  hoursWeekend: string;
+  commute: string;
+  period: string;
+  eval: { [key: string]: number }; // 評価項目ID -> スコア (1~5)
+  tags: string[];
+  status: string;
+  createdAt: number;
+}
+
+interface EvalField {
+  id: string;
+  name: string;
+  icon: string; // lucideアイコン識別名
+}
+
+// 評価用アイコンマッピング
+const iconMap: { [key: string]: React.ComponentType<any> } = {
+  'smile': Smile,
+  'message-square': MessageSquare,
+  'sparkles': Sparkles,
+  'shield-check': ShieldCheck,
+  'zap': Zap,
+  'briefcase': Briefcase,
+  'star': Star,
+  'clock': Clock,
+  'calendar': Calendar,
+};
+
+export default function App() {
+  // --- アプリケーション状態 ---
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [evalFields, setEvalFields] = useState<EvalField[]>([]);
+  const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
+  const [activeFilterStatus, setActiveFilterStatus] = useState<string>('all');
+  const [activeFilterTags, setActiveFilterTags] = useState<string[]>([]);
+  const [searchText, setSearchText] = useState<string>('');
+  const [sortOption, setSortOption] = useState<string>('newest');
+
+  // モーダル・ダイアログ管理
+  const [showingAddEditModal, setShowingAddEditModal] = useState<boolean>(false);
+  const [editingCandidate, setEditingCandidate] = useState<Candidate | null>(null);
+  const [showingSettingsModal, setShowingSettingsModal] = useState<boolean>(false);
+  
+  // カスタム確認アラート
+  const [showingDeleteConfirm, setShowingDeleteConfirm] = useState<boolean>(false);
+  const [candidateToDelete, setCandidateToDelete] = useState<Candidate | null>(null);
+  
+  // トースト通知
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [showToast, setShowToast] = useState<boolean>(false);
+
+  // モバイル画面でのビュー切り替え（モバイル時には詳細画面を重ねる）
+  const [isMobileDetailActive, setIsMobileDetailActive] = useState<boolean>(false);
+
+  // --- マスター設定データ ---
+  const allTags = [
+    "高校生", "大学生", "主婦", "フリーター",
+    "長期希望", "土日可能", "夜勤務可能",
+    "即採用候補", "教育必要", "不安あり"
+  ];
+
+  const statusOptions = ["面接予定", "検討中", "採用", "不採用", "辞退"];
+  const commuteOptions = ["徒歩", "自転車", "原付・バイク", "電車・バス", "車通勤"];
+  const periodOptions = ["長期可能 (1年以上)", "半年以上", "3ヶ月以上", "短期 (3ヶ月未満)"];
+
+  // --- データの初期読み込み (localStorage) ---
+  useEffect(() => {
+    // 評価項目の初期化
+    const storedFields = localStorage.getItem('Mennsetu_eval_fields');
+    let fields: EvalField[] = [];
+    if (storedFields) {
+      try {
+        fields = JSON.parse(storedFields);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    
+    if (fields.length === 0) {
+      fields = [
+        { id: "aiso", name: "愛想・笑顔", icon: "smile" },
+        { id: "seiryo", name: "声量・ハキハキ", icon: "message-square" },
+        { id: "seiketsu", name: "身だしなみ・清潔感", icon: "sparkles" },
+        { id: "comm", name: "コミュ力", icon: "shield-check" },
+        { id: "majime", name: "真面目さ", icon: "star" },
+        { id: "antei", name: "シフト安定性", icon: "clock" },
+        { id: "sokusen", name: "即戦力期待", icon: "zap" }
+      ];
+      localStorage.setItem('Mennsetu_eval_fields', JSON.stringify(fields));
+    }
+    setEvalFields(fields);
+
+    // 候補者データの初期化（初期デモデータはなし）
+    const storedCandidates = localStorage.getItem('Mennsetu_candidates');
+    if (storedCandidates) {
+      try {
+        const parsed = JSON.parse(storedCandidates);
+        setCandidates(parsed);
+        if (parsed.length > 0) {
+          setSelectedCandidateId(parsed[0].id);
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  }, []);
+
+  // データが変更されるたびに自動保存
+  const saveCandidatesToStorage = (updatedList: Candidate[]) => {
+    setCandidates(updatedList);
+    localStorage.setItem('Mennsetu_candidates', JSON.stringify(updatedList));
+  };
+
+  const saveFieldsToStorage = (updatedFields: EvalField[]) => {
+    setEvalFields(updatedFields);
+    localStorage.setItem('Mennsetu_eval_fields', JSON.stringify(updatedFields));
+  };
+
+  // --- ユーティリティ & ヘルパー ---
+  const triggerToast = (msg: string) => {
+    setToastMessage(msg);
+    setShowToast(true);
+    setTimeout(() => {
+      setShowToast(false);
+    }, 2500);
+  };
+
+  // 1人の平均点を計算
+  const calculateAverage = (candidate: Candidate) => {
+    if (evalFields.length === 0) return 0;
+    let sum = 0;
+    let count = 0;
+    evalFields.forEach(field => {
+      const score = candidate.eval[field.id];
+      if (score !== undefined) {
+        sum += score;
+        count++;
+      }
+    });
+    return count > 0 ? sum / count : 0;
+  };
+
+  // 統計情報
+  const stats = useMemo(() => {
+    const total = candidates.length;
+    const hired = candidates.filter(c => c.status === '採用').length;
+    const rate = total > 0 ? Math.round((hired / total) * 100) : 0;
+    
+    let totalScoreSum = 0;
+    let evalCount = 0;
+    candidates.forEach(c => {
+      const avg = calculateAverage(c);
+      if (avg > 0) {
+        totalScoreSum += avg;
+        evalCount++;
+      }
+    });
+    const avgScore = evalCount > 0 ? (totalScoreSum / evalCount).toFixed(1) : "0.0";
+
+    return { total, hired, rate, avgScore };
+  }, [candidates, evalFields]);
+
+  // 絞り込み ＆ ソート処理
+  const filteredCandidates = useMemo(() => {
+    let result = [...candidates];
+
+    // ステータスフィルタ
+    if (activeFilterStatus !== 'all') {
+      result = result.filter(c => c.status === activeFilterStatus);
+    }
+
+    // タグフィルタ
+    if (activeFilterTags.length > 0) {
+      result = result.filter(c => 
+        activeFilterTags.every(tag => c.tags.includes(tag))
+      );
+    }
+
+    // キーワード検索
+    if (searchText.trim()) {
+      const query = searchText.toLowerCase().trim();
+      result = result.filter(c => 
+        c.name.toLowerCase().includes(query) ||
+        c.job.toLowerCase().includes(query) ||
+        c.address.toLowerCase().includes(query) ||
+        c.notes.toLowerCase().includes(query)
+      );
+    }
+
+    // ソート順
+    result.sort((a, b) => {
+      if (sortOption === 'newest') {
+        return b.createdAt - a.createdAt;
+      } else if (sortOption === 'eval-desc') {
+        return calculateAverage(b) - calculateAverage(a);
+      } else if (sortOption === 'eval-asc') {
+        return calculateAverage(a) - calculateAverage(b);
+      } else if (sortOption === 'name') {
+        return a.name.localeCompare(b.name, 'ja');
+      }
+      return 0;
+    });
+
+    return result;
+  }, [candidates, activeFilterStatus, activeFilterTags, searchText, sortOption, evalFields]);
+
+  // 選択中の候補者
+  const selectedCandidate = useMemo(() => {
+    return candidates.find(c => c.id === selectedCandidateId) || null;
+  }, [candidates, selectedCandidateId]);
+
+  // 一覧のカードをタップした際のイベント
+  const handleSelectCandidate = (id: string) => {
+    setSelectedCandidateId(id);
+    setIsMobileDetailActive(true); // モバイル時に詳細ビューに切り替え
+  };
+
+  // 削除処理
+  const handleDeleteClick = (candidate: Candidate) => {
+    setCandidateToDelete(candidate);
+    showingDeleteConfirm ? null : setShowingDeleteConfirm(true);
+  };
+
+  const confirmDeleteCandidate = () => {
+    if (!candidateToDelete) return;
+    const updated = candidates.filter(c => c.id !== candidateToDelete.id);
+    saveCandidatesToStorage(updated);
+    
+    if (selectedCandidateId === candidateToDelete.id) {
+      setSelectedCandidateId(updated.length > 0 ? updated[0].id : null);
+    }
+    
+    setShowingDeleteConfirm(false);
+    setCandidateToDelete(null);
+    setIsMobileDetailActive(false);
+    triggerToast("候補者データを完全に削除しました");
+  };
+
+  // インポート・エクスポート
+  const exportData = () => {
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(candidates, null, 2));
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute("href", dataStr);
+    downloadAnchor.setAttribute("download", `面接スプレッドシート_${new Date().toISOString().split('T')[0]}.json`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+    triggerToast("JSON形式でデータをエクスポートしました");
+  };
+
+  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const parsed = JSON.parse(event.target?.result as string);
+        if (Array.isArray(parsed)) {
+          saveCandidatesToStorage(parsed);
+          if (parsed.length > 0) {
+            setSelectedCandidateId(parsed[0].id);
+          }
+          triggerToast("データのインポートに成功しました");
+        } else {
+          alert("データ形式が正しくありません。配列データである必要があります。");
+        }
+      } catch (err) {
+        alert("JSONファイルの解析に失敗しました。");
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  // PDF印刷出力の呼び出し
+  const triggerPrint = () => {
+    window.print();
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans select-none antialiased">
+      
+      {/* 通常アプリの画面レイアウト (印刷時は隠す) */}
+      <div className="flex-1 flex flex-col overflow-hidden print:hidden">
+        
+        {/* ヘッダー */}
+        <header className="bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between shrink-0 shadow-sm z-10">
+          <div className="flex items-center space-x-3">
+            <div className="bg-emerald-500 text-white p-2 rounded-lg shadow-sm">
+              <FileText className="w-5 h-5" />
+            </div>
+            <div>
+              <h1 className="text-base font-bold tracking-wide text-slate-900 flex items-center gap-1.5">
+                面接スプレッドシート
+                <span className="text-3xs bg-emerald-50 text-emerald-600 border border-emerald-200 font-bold px-1.5 py-0.5 rounded">
+                  OFFLINE
+                </span>
+              </h1>
+              <p className="text-4xs text-slate-400">飲食店舗向け面接評価・シフト管理</p>
+            </div>
+          </div>
+          
+          <div className="flex items-center space-x-1.5">
+            <button 
+              onClick={exportData}
+              title="データをJSONでバックアップ"
+              className="p-1.5 sm:px-3 sm:py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-xs font-semibold transition flex items-center gap-1.5 border border-slate-200"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">エクスポート</span>
+            </button>
+            <label className="p-1.5 sm:px-3 sm:py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-xs font-semibold transition flex items-center gap-1.5 border border-slate-200 cursor-pointer">
+              <Upload className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">インポート</span>
+              <input type="file" accept=".json" onChange={handleImport} className="hidden" />
+            </label>
+            <button 
+              onClick={() => {
+                setShowingSettingsModal(true);
+              }}
+              className="p-1.5 sm:px-3 sm:py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-xs font-semibold transition flex items-center gap-1.5 border border-slate-200"
+            >
+              <Settings className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">項目設定</span>
+            </button>
+            <button 
+              onClick={() => {
+                setEditingCandidate(null);
+                setShowingAddEditModal(true);
+              }}
+              className="p-1.5 sm:px-4 sm:py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-md text-xs font-bold transition flex items-center gap-1.5 shadow-sm shadow-emerald-500/10"
+            >
+              <Plus className="w-4 h-4" />
+              <span>新規登録</span>
+            </button>
+          </div>
+        </header>
+
+        {/* 統計情報ダッシュボード */}
+        <div className="bg-slate-100 border-b border-slate-200 px-4 py-2.5 shrink-0 grid grid-cols-4 gap-2">
+          <div className="bg-white p-2.5 rounded-lg border border-slate-200 flex items-center justify-between">
+            <div>
+              <p className="text-4xs text-slate-400 font-bold uppercase">総面接人数</p>
+              <p className="text-sm sm:text-base font-black text-slate-800 mt-0.5">{stats.total}人</p>
+            </div>
+            <div className="w-7 h-7 bg-blue-50 text-blue-500 rounded-full flex items-center justify-center">
+              <UserPlus className="w-4 h-4" />
+            </div>
+          </div>
+          
+          <div className="bg-white p-2.5 rounded-lg border border-slate-200 flex items-center justify-between">
+            <div>
+              <p className="text-4xs text-slate-400 font-bold uppercase">採用者数</p>
+              <p className="text-sm sm:text-base font-black text-emerald-600 mt-0.5">{stats.hired}人</p>
+            </div>
+            <div className="w-7 h-7 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center">
+              <Check className="w-4 h-4" />
+            </div>
+          </div>
+
+          <div className="bg-white p-2.5 rounded-lg border border-slate-200 flex items-center justify-between">
+            <div>
+              <p className="text-4xs text-slate-400 font-bold uppercase">採用率</p>
+              <p className="text-sm sm:text-base font-black text-amber-500 mt-0.5">{stats.rate}%</p>
+            </div>
+            <div className="w-7 h-7 bg-amber-50 text-amber-500 rounded-full flex items-center justify-center">
+              <Star className="w-4 h-4" />
+            </div>
+          </div>
+
+          <div className="bg-white p-2.5 rounded-lg border border-slate-200 flex items-center justify-between">
+            <div>
+              <p className="text-4xs text-slate-400 font-bold uppercase">候補者全体平均</p>
+              <p className="text-sm sm:text-base font-black text-purple-600 mt-0.5">{stats.avgScore}</p>
+            </div>
+            <div className="w-7 h-7 bg-purple-50 text-purple-500 rounded-full flex items-center justify-center">
+              <Star className="w-4 h-4 fill-purple-500" />
+            </div>
+          </div>
+        </div>
+
+        {/* メイングリッドエリア */}
+        <div className="flex-1 flex overflow-hidden relative">
+          
+          {/* 左側: 候補者一覧 */}
+          <div className="w-full md:w-[45%] lg:w-[40%] flex flex-col border-r border-slate-200 bg-white h-full overflow-hidden">
+            
+            {/* 検索・クイックフィルタ */}
+            <div className="p-3 bg-slate-50 border-b border-slate-200 flex flex-col gap-2 shrink-0">
+              <div className="flex gap-1.5">
+                <div className="relative flex-1">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                  <input 
+                    type="text" 
+                    placeholder="名前、学校、住所、メモを検索..." 
+                    value={searchText}
+                    onChange={(e) => setSearchText(e.target.value)}
+                    className="w-full pl-8 pr-3 py-1.5 bg-white border border-slate-300 rounded-md text-xs placeholder-slate-400 focus:outline-none focus:border-emerald-500 transition-colors"
+                  />
+                </div>
+                
+                <div className="relative">
+                  <select 
+                    value={sortOption}
+                    onChange={(e) => setSortOption(e.target.value)}
+                    className="pl-2 pr-7 py-1.5 bg-white border border-slate-300 rounded-md text-xs text-slate-700 font-semibold focus:outline-none appearance-none cursor-pointer"
+                  >
+                    <option value="newest">🆕 新着順</option>
+                    <option value="eval-desc">⭐ 評価高順</option>
+                    <option value="eval-asc">⚠️ 評価低順</option>
+                    <option value="name">🔤 名前順</option>
+                  </select>
+                  <ChevronDown className="w-3 h-3 text-slate-500 absolute right-2.5 top-2.5 pointer-events-none" />
+                </div>
+              </div>
+
+              {/* ステータスフィルタタブ */}
+              <div className="flex gap-1 overflow-x-auto pb-1 scrollbar-none text-2xs">
+                <button 
+                  onClick={() => setActiveFilterStatus('all')}
+                  className={`px-3 py-1 font-bold rounded-full shrink-0 transition ${activeFilterStatus === 'all' ? 'bg-emerald-500 text-white' : 'bg-slate-200/60 text-slate-600 hover:bg-slate-200'}`}
+                >
+                  全て ({candidates.length})
+                </button>
+                {statusOptions.map(status => {
+                  const count = candidates.filter(c => c.status === status).length;
+                  return (
+                    <button 
+                      key={status}
+                      onClick={() => setActiveFilterStatus(status)}
+                      className={`px-3 py-1 font-bold rounded-full shrink-0 transition ${activeFilterStatus === status ? 'bg-emerald-500 text-white' : 'bg-slate-200/60 text-slate-600 hover:bg-slate-200'}`}
+                    >
+                      {status} ({count})
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* タグクイック選択 */}
+              <div className="flex gap-1 overflow-x-auto pb-1 scrollbar-none text-3xs border-t border-slate-200/50 pt-2">
+                {allTags.map(tag => {
+                  const isActive = activeFilterTags.includes(tag);
+                  return (
+                    <button
+                      key={tag}
+                      onClick={() => {
+                        if (isActive) {
+                          setActiveFilterTags(activeFilterTags.filter(t => t !== tag));
+                        } else {
+                          setActiveFilterTags([...activeFilterTags, tag]);
+                        }
+                      }}
+                      className={`px-2.5 py-1 rounded-full shrink-0 font-bold transition ${isActive ? 'bg-emerald-50 text-emerald-600 border border-emerald-300' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-100'}`}
+                    >
+                      # {tag}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 候補者リスト */}
+            <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-slate-50">
+              {filteredCandidates.length === 0 ? (
+                <div className="py-12 text-center text-slate-400">
+                  <FileText className="w-8 h-8 mx-auto mb-2 text-slate-300" />
+                  <p className="text-xs">条件に合致する候補者はいません</p>
+                </div>
+              ) : (
+                filteredCandidates.map(c => {
+                  const avg = calculateAverage(c);
+                  const isSelected = c.id === selectedCandidateId;
+                  return (
+                    <div
+                      key={c.id}
+                      onClick={() => handleSelectCandidate(c.id)}
+                      className={`p-3 bg-white border rounded-xl cursor-pointer transition-all duration-150 relative overflow-hidden ${isSelected ? 'border-emerald-500 ring-2 ring-emerald-500/10 scale-[1.01]' : 'border-slate-200 hover:border-slate-300'}`}
+                    >
+                      {/* 左端ステータスカラー */}
+                      <div className={`absolute left-0 top-0 bottom-0 w-1 ${getStatusColorClass(c.status)}`} />
+                      
+                      <div className="pl-1.5 space-y-1.5">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <span className="text-xs font-black text-slate-800">{c.name}</span>
+                            <span className="text-4xs text-slate-400 ml-1.5">{c.age}歳 ｜ {c.job}</span>
+                          </div>
+                          <span className={`text-4xs font-bold px-1.5 py-0.5 rounded ${getStatusBadgeClass(c.status)}`}>
+                            {c.status}
+                          </span>
+                        </div>
+
+                        <div className="flex justify-between items-center text-3xs">
+                          <span className="flex items-center gap-1 font-bold text-slate-700">
+                            <Star className="w-3 h-3 text-amber-500 fill-amber-500" />
+                            {avg.toFixed(1)}
+                          </span>
+                          
+                          {c.weekdays.length > 0 && (
+                            <span className="px-1.5 py-0.5 bg-emerald-50 text-emerald-600 font-bold rounded">
+                              {c.weekdays.join(', ')}
+                            </span>
+                          )}
+                        </div>
+
+                        {c.notes && (
+                          <p className="text-4xs text-slate-500 truncate italic bg-slate-50 px-1.5 py-1 rounded">
+                            "{c.notes}"
+                          </p>
+                        )}
+
+                        <div className="flex flex-wrap gap-1">
+                          {c.tags.map(tag => (
+                            <span key={tag} className="text-4xs font-semibold px-1 py-0.2 bg-slate-100 text-slate-500 rounded">
+                              #{tag}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* 右側: 候補者詳細（デスクトップ・iPadでは表示、モバイルではスライドイン） */}
+          <div className={`absolute inset-0 md:relative md:flex flex-col flex-1 bg-white z-20 transition-transform duration-200 ease-out ${isMobileDetailActive ? 'translate-x-0' : 'translate-x-full md:translate-x-0'}`}>
+            {selectedCandidate ? (
+              <div className="h-full flex flex-col overflow-hidden bg-slate-100">
+                {/* 詳細ヘッダー */}
+                <div className="bg-white border-b border-slate-200 px-4 py-2.5 flex items-center justify-between shrink-0">
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => setIsMobileDetailActive(false)}
+                      className="md:hidden p-1 bg-slate-100 rounded-full text-slate-600 hover:bg-slate-200"
+                    >
+                      <ArrowLeft className="w-4 h-4" />
+                    </button>
+                    <span className="text-xs font-bold text-slate-400">詳細カルテ</span>
+                  </div>
+                  
+                  <div className="flex items-center space-x-1.5">
+                    <button 
+                      onClick={triggerPrint}
+                      className="px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-md text-xs font-bold transition flex items-center gap-1"
+                    >
+                      <FileText className="w-3.5 h-3.5" />
+                      <span>PDF印刷</span>
+                    </button>
+                    <button 
+                      onClick={() => {
+                        setEditingCandidate(selectedCandidate);
+                        setShowingAddEditModal(true);
+                      }}
+                      className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-xs font-bold transition flex items-center gap-1 border border-slate-200"
+                    >
+                      <Edit className="w-3.5 h-3.5" />
+                      <span>編集</span>
+                    </button>
+                    <button 
+                      onClick={() => handleDeleteClick(selectedCandidate)}
+                      className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-500 rounded-md transition border border-rose-200"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* 詳細中身（スクロール領域） */}
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  
+                  {/* 基本情報 */}
+                  <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm relative overflow-hidden">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h2 className="text-base font-black text-slate-800">{selectedCandidate.name}</h2>
+                        <p className="text-xs text-slate-500 mt-1">{selectedCandidate.age}歳 ｜ {selectedCandidate.job}</p>
+                      </div>
+                      <span className={`text-xs font-extrabold px-3 py-1 rounded-md border ${getStatusBadgeClass(selectedCandidate.status)}`}>
+                        {selectedCandidate.status}
+                      </span>
+                    </div>
+
+                    <div className="mt-4 pt-3 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                      {selectedCandidate.phone && (
+                        <div className="flex items-center gap-2 text-slate-600">
+                          <Phone className="w-3.5 h-3.5 text-slate-400" />
+                          <span>{selectedCandidate.phone}</span>
+                        </div>
+                      )}
+                      {selectedCandidate.address && (
+                        <div className="flex items-center gap-2 text-slate-600 col-span-1 sm:col-span-2">
+                          <MapPin className="w-3.5 h-3.5 text-slate-400" />
+                          <span>{selectedCandidate.address}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 勤務希望シフト条件 */}
+                  <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-3">
+                    <h3 className="text-xs font-bold text-slate-400 border-b border-slate-100 pb-1.5">📅 シフト希望条件</h3>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+                      <div className="col-span-2 flex justify-between py-1 border-b border-slate-50">
+                        <span className="text-slate-400">勤務可能曜日</span>
+                        <span className="font-bold text-emerald-600">
+                          {selectedCandidate.weekdays.length > 0 ? selectedCandidate.weekdays.join(' / ') : '希望なし'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between py-1 border-b border-slate-50">
+                        <span className="text-slate-400">希望日数</span>
+                        <span className="font-bold">{selectedCandidate.weeklyDays}</span>
+                      </div>
+                      <div className="flex justify-between py-1 border-b border-slate-50">
+                        <span className="text-slate-400">通勤手段</span>
+                        <span className="font-bold">{selectedCandidate.commute}</span>
+                      </div>
+                      <div className="flex justify-between py-1 border-b border-slate-50">
+                        <span className="text-slate-400">希望時間 (平日)</span>
+                        <span className="font-bold">{selectedCandidate.hoursWeekday || '未設定'}</span>
+                      </div>
+                      <div className="flex justify-between py-1 border-b border-slate-50">
+                        <span className="text-slate-400">希望時間 (土日祝)</span>
+                        <span className="font-bold">{selectedCandidate.hoursWeekend || '未設定'}</span>
+                      </div>
+                      <div className="col-span-2 flex justify-between py-1">
+                        <span className="text-slate-400">可能期間</span>
+                        <span className="font-bold">{selectedCandidate.period}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* レーダーチャート ＆ 総合スコア */}
+                  <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
+                    <div className="w-full sm:w-[150px] h-[150px] relative flex items-center justify-center">
+                      <SVGChart 
+                        evalData={selectedCandidate.eval} 
+                        fields={evalFields} 
+                        isPrint={false}
+                      />
+                    </div>
+                    
+                    <div className="flex-1 text-center sm:text-right flex flex-col justify-center">
+                      <span className="text-4xs font-bold text-slate-400 uppercase">総合評価スコア</span>
+                      <p className="text-3xl font-black text-amber-500 mt-1">
+                        {calculateAverage(selectedCandidate).toFixed(1)}
+                        <span className="text-xs text-slate-400 font-semibold"> / 5.0</span>
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* 評価詳細 */}
+                  <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-3">
+                    <h3 className="text-xs font-bold text-slate-400 border-b border-slate-100 pb-1.5">📊 項目別詳細評価</h3>
+                    <div className="space-y-2 text-xs">
+                      {evalFields.map(field => {
+                        const score = selectedCandidate.eval[field.id] ?? 3;
+                        const IconComponent = iconMap[field.icon] || Star;
+                        return (
+                          <div key={field.id} className="flex items-center justify-between gap-3">
+                            <span className="text-slate-700 flex items-center gap-1.5 w-32 shrink-0 font-bold">
+                              <IconComponent className="w-3.5 h-3.5 text-slate-400" />
+                              {field.name}
+                            </span>
+                            <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                              <div 
+                                className={`h-full rounded-full ${score >= 4 ? 'bg-emerald-500' : (score >= 3 ? 'bg-orange-400' : 'bg-rose-500')}`} 
+                                style={{ width: `${score * 20}%` }}
+                              />
+                            </div>
+                            <span className="font-black text-slate-800 w-8 text-right">{score}点</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* 属性タグ */}
+                  {selectedCandidate.tags.length > 0 && (
+                    <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-2">
+                      <h3 className="text-xs font-bold text-slate-400 border-b border-slate-100 pb-1.5">🏷️ 属性タグ</h3>
+                      <div className="flex flex-wrap gap-1.5">
+                        {selectedCandidate.tags.map(tag => (
+                          <span key={tag} className="px-3 py-1 bg-emerald-50 text-emerald-600 border border-emerald-100 text-2xs font-bold rounded-full">
+                            # {tag}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 特記事項・メモ */}
+                  <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-2">
+                    <h3 className="text-xs font-bold text-slate-400 border-b border-slate-100 pb-1.5">📝 特記事項・面接メモ</h3>
+                    <p className="text-xs leading-relaxed text-slate-700 bg-slate-50 p-3 rounded-lg border border-slate-100 whitespace-pre-wrap">
+                      {selectedCandidate.notes || <span className="text-slate-400 italic">登録済みのメモはありません。</span>}
+                    </p>
+                  </div>
+
+                </div>
+              </div>
+            ) : (
+              <div className="h-full flex flex-col items-center justify-center text-center text-slate-400 bg-slate-50 p-6">
+                <div className="p-4 bg-white rounded-full border border-slate-200 shadow-inner mb-3">
+                  <UserPlus className="w-8 h-8 text-slate-300" />
+                </div>
+                <h3 className="text-sm font-bold">候補者データが登録されていません</h3>
+                <p className="text-xs mt-1 text-slate-400">右上の「新規登録」から新しい面接結果を記録しましょう。</p>
+              </div>
+            )}
+          </div>
+
+        </div>
+      </div>
+
+      {/* ──────────────────────────────────────────────────────── */}
+      {/* 登録・編集モーダル */}
+      {/* ──────────────────────────────────────────────────────── */}
+      {showingAddEditModal && (
+        <AddEditModalComponent 
+          candidate={editingCandidate} 
+          evalFields={evalFields}
+          statusOptions={statusOptions}
+          commuteOptions={commuteOptions}
+          periodOptions={periodOptions}
+          allTags={allTags}
+          onClose={() => {
+            setShowingAddEditModal(false);
+            setEditingCandidate(null);
+          }}
+          onSave={(savedCandidate) => {
+            let updatedList = [...candidates];
+            if (editingCandidate) {
+              const idx = candidates.findIndex(c => c.id === editingCandidate.id);
+              if (idx > -1) {
+                updatedList[idx] = savedCandidate;
+                triggerToast("候補者データを更新しました");
+              }
+            } else {
+              updatedList.unshift(savedCandidate);
+              setSelectedCandidateId(savedCandidate.id);
+              triggerToast("新規候補者を追加しました");
+            }
+            saveCandidatesToStorage(updatedList);
+            setShowingAddEditModal(false);
+            setEditingCandidate(null);
+          }}
+        />
+      )}
+
+      {/* ──────────────────────────────────────────────────────── */}
+      {/* 評価項目設定モーダル */}
+      {/* ──────────────────────────────────────────────────────── */}
+      {showingSettingsModal && (
+        <SettingsModalComponent 
+          evalFields={evalFields}
+          onClose={() => setShowingSettingsModal(false)}
+          onSaveFields={(updated) => {
+            saveFieldsToStorage(updated);
+            triggerToast("評価項目を更新しました");
+          }}
+          triggerToast={triggerToast}
+        />
+      )}
+
+      {/* ──────────────────────────────────────────────────────── */}
+      {/* 候補者削除カスタムダイアログ */}
+      {/* ──────────────────────────────────────────────────────── */}
+      {showingDeleteConfirm && candidateToDelete && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-sm w-full overflow-hidden animate-in zoom-in duration-200">
+            <div className="p-5 text-center">
+              <div className="w-12 h-12 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center mx-auto mb-3 border border-rose-200">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <h3 className="text-sm font-bold text-slate-900">本当に削除しますか？</h3>
+              <p className="text-xs text-slate-500 mt-2 leading-relaxed">
+                「{candidateToDelete.name}」さんの面接データを完全に削除します。<br />この操作は元に戻せません。
+              </p>
+            </div>
+            <div className="border-t border-slate-100 flex divide-x divide-slate-100 text-xs">
+              <button 
+                onClick={() => setShowingDeleteConfirm(false)}
+                className="flex-1 py-3 text-center text-slate-600 font-bold hover:bg-slate-50"
+              >
+                キャンセル
+              </button>
+              <button 
+                onClick={confirmDeleteCandidate}
+                className="flex-1 py-3 text-center text-rose-600 font-bold hover:bg-rose-50"
+              >
+                削除する
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ──────────────────────────────────────────────────────── */}
+      {/* トースト通知 */}
+      {/* ──────────────────────────────────────────────────────── */}
+      <div className={`fixed bottom-5 left-1/2 transform -translate-x-1/2 bg-white border border-emerald-500/30 text-slate-800 text-xs px-4 py-3 rounded-xl shadow-2xl flex items-center gap-2 z-[100] transition-all duration-300 ${showToast ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
+        <Check className="w-4 h-4 text-emerald-500" />
+        <span className="font-bold">{toastMessage}</span>
+      </div>
+
+      {/* ──────────────────────────────────────────────────────── */}
+      {/* 【印刷専用 A4 レイアウト領域】 通常画面では完全に非表示 */}
+      {/* ──────────────────────────────────────────────────────── */}
+      {selectedCandidate && (
+        <div className="hidden print:block w-[640px] mx-auto p-4 bg-white text-black text-2xs leading-snug">
+          
+          {/* ヘッダー */}
+          <div className="flex justify-between items-end border-b-2 border-black pb-2 mb-4">
+            <div>
+              <h1 className="text-base font-extrabold tracking-wide text-black">アルバイト採用 面接評価カルテ</h1>
+              <p className="text-4xs text-slate-500 mt-0.5">面接スプレッドシート - 店舗控用</p>
+            </div>
+            <div className="text-right">
+              <p className="text-4xs text-slate-500">印刷出力日: {new Date().toLocaleDateString('ja-JP')}</p>
+            </div>
+          </div>
+
+          {/* 基本情報テーブル */}
+          <div className="mb-3">
+            <table className="w-full border-collapse border border-slate-300 text-4xs">
+              <tbody>
+                <tr className="border-b border-slate-300">
+                  <th className="w-[15%] bg-slate-50 p-1.5 text-left font-bold border-r border-slate-300">氏名</th>
+                  <td className="w-[35%] p-1.5 font-bold text-xs border-r border-slate-300">{selectedCandidate.name}</td>
+                  <th className="w-[15%] bg-slate-50 p-1.5 text-left font-bold border-r border-slate-300">選考結果</th>
+                  <td className="w-[35%] p-1.5 font-bold text-xs">{selectedCandidate.status}</td>
+                </tr>
+                <tr className="border-b border-slate-300">
+                  <th className="bg-slate-50 p-1.5 text-left font-bold border-r border-slate-300">年齢</th>
+                  <td className="p-1.5 border-r border-slate-300">{selectedCandidate.age} 歳</td>
+                  <th className="bg-slate-50 p-1.5 text-left font-bold border-r border-slate-300">面接日</th>
+                  <td className="p-1.5 font-medium">{selectedCandidate.interviewDate}</td>
+                </tr>
+                <tr className="border-b border-slate-300">
+                  <th className="bg-slate-50 p-1.5 text-left font-bold border-r border-slate-300">学校 / 職業</th>
+                  <td className="p-1.5 border-r border-slate-300">{selectedCandidate.job}</td>
+                  <th className="bg-slate-50 p-1.5 text-left font-bold border-r border-slate-300">連絡先</th>
+                  <td className="p-1.5">{selectedCandidate.phone || '未登録'}</td>
+                </tr>
+                <tr>
+                  <th className="bg-slate-50 p-1.5 text-left font-bold border-r border-slate-300">現住所</th>
+                  <td className="p-1.5" colSpan={3}>{selectedCandidate.address || '未登録'}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {/* 勤務条件＆タグ */}
+          <div className="grid grid-cols-2 gap-3 mb-3">
+            <div className="border border-slate-300 rounded p-2.5">
+              <h3 className="text-3xs font-bold border-b border-slate-200 pb-1 mb-1.5 text-slate-800">📅 シフト希望条件</h3>
+              <table className="w-full text-4xs space-y-1">
+                <tbody>
+                  <tr>
+                    <td className="font-bold py-0.5 w-[35%] text-slate-500">勤務可能曜日:</td>
+                    <td className="font-bold">{selectedCandidate.weekdays.length > 0 ? selectedCandidate.weekdays.join(', ') : '特になし'}</td>
+                  </tr>
+                  <tr>
+                    <td className="font-bold py-0.5 text-slate-500">希望日数:</td>
+                    <td className="font-bold">{selectedCandidate.weeklyDays}</td>
+                  </tr>
+                  <tr>
+                    <td className="font-bold py-0.5 text-slate-500">時間 (平日):</td>
+                    <td>{selectedCandidate.hoursWeekday || '未設定'}</td>
+                  </tr>
+                  <tr>
+                    <td className="font-bold py-0.5 text-slate-500">時間 (土日祝):</td>
+                    <td>{selectedCandidate.hoursWeekend || '未設定'}</td>
+                  </tr>
+                  <tr>
+                    <td className="font-bold py-0.5 text-slate-500">通勤手段 / 期間:</td>
+                    <td>{selectedCandidate.commute} ｜ {selectedCandidate.period}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div className="border border-slate-300 rounded p-2.5 flex flex-col justify-between">
+              <div>
+                <h3 className="text-3xs font-bold border-b border-slate-200 pb-1 mb-1.5 text-slate-800">🏷️ 属性タグ</h3>
+                <div className="flex flex-wrap gap-1">
+                  {selectedCandidate.tags.length > 0 ? (
+                    selectedCandidate.tags.map(tag => (
+                      <span key={tag} className="px-1.5 py-0.5 border border-slate-400 rounded text-4xs font-bold">
+                        #{tag}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-4xs text-slate-400 italic">付与タグなし</span>
+                  )}
+                </div>
+              </div>
+              <div className="mt-2 pt-1.5 border-t border-slate-150">
+                <span className="text-4xs font-bold text-slate-400 block">総合評価点</span>
+                <div className="flex items-baseline gap-1 mt-0.5">
+                  <span className="text-sm font-black text-slate-900">{calculateAverage(selectedCandidate).toFixed(1)}</span>
+                  <span className="text-4xs text-slate-400">/ 5.0 点満点</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* グラフ ＆ 内訳 */}
+          <div className="grid grid-cols-10 gap-3 mb-3 items-center">
+            {/* 左：レーダーチャート */}
+            <div className="col-span-4 border border-slate-300 rounded p-2 flex flex-col items-center justify-center">
+              <span className="text-4xs font-bold text-slate-500 mb-1">評価チャート</span>
+              <div className="w-[120px] h-[120px] relative">
+                <SVGChart 
+                  evalData={selectedCandidate.eval} 
+                  fields={evalFields} 
+                  isPrint={true}
+                />
+              </div>
+            </div>
+
+            {/* 右：詳細テーブル */}
+            <div className="col-span-6 border border-slate-300 rounded p-2">
+              <span className="text-4xs font-bold text-slate-500 mb-1 block border-b border-slate-200 pb-0.5">評価項目詳細</span>
+              <table className="w-full text-4xs">
+                <tbody>
+                  {evalFields.map(field => {
+                    const score = selectedCandidate.eval[field.id] ?? 3;
+                    return (
+                      <tr key={field.id} className="border-b border-slate-150 last:border-0">
+                        <td className="py-1 font-bold w-[45%] text-slate-700">{field.name}</td>
+                        <td className="py-1 text-center w-[35%] tracking-widest text-slate-400">
+                          {"●".repeat(score) + "○".repeat(5 - score)}
+                        </td>
+                        <td className="py-1 text-right font-black w-[20%]">{score}点</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* メモ */}
+          <div className="border border-slate-300 rounded p-2.5">
+            <h3 className="text-3xs font-bold border-b border-slate-200 pb-1 mb-1 text-slate-800">📝 特記事項・面接メモ</h3>
+            <p className="text-4xs text-slate-700 whitespace-pre-wrap min-h-[90px] leading-relaxed pt-1">
+              {selectedCandidate.notes || '（面接メモはありません）'}
+            </p>
+          </div>
+
+        </div>
+      )}
+
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────
+// MARK: - 自作高解像度SVGレーダーチャート (ライブラリ一切不要)
+// ────────────────────────────────────────────────────────
+interface ChartProps {
+  evalData: { [key: string]: number };
+  fields: EvalField[];
+  isPrint: boolean;
+}
+
+function SVGChart({ evalData, fields, isPrint }: ChartProps) {
+  const size = 150;
+  const center = size / 2;
+  const radius = center * 0.75;
+  const numAxes = fields.length;
+
+  if (numAxes < 3) return <div className="text-4xs text-slate-400">チャート表示不可</div>;
+
+  // 各軸の角度を計算
+  const angleSlice = (Math.PI * 2) / numAxes;
+
+  // 同心円グリッド
+  const grids = [1, 2, 3, 4, 5];
+
+  // データ頂点の座標計算
+  const points = fields.map((field, i) => {
+    const score = evalData[field.id] ?? 3;
+    const r = radius * (score / 5);
+    const angle = angleSlice * i - Math.PI / 2; // 上から開始
+    const x = center + r * Math.cos(angle);
+    const y = center + r * Math.sin(angle);
+    return { x, y };
+  });
+
+  const polygonPointsStr = points.map(p => `${p.x},${p.y}`).join(' ');
+
+  // 軸線の描画
+  const axisLines = fields.map((field, i) => {
+    const angle = angleSlice * i - Math.PI / 2;
+    const x = center + radius * Math.cos(angle);
+    const y = center + radius * Math.sin(angle);
+
+    // テキスト表示座標
+    const textDist = radius + 14;
+    const tx = center + textDist * Math.cos(angle);
+    const ty = center + textDist * Math.sin(angle) + 3; // 微調整
+
+    return {
+      x2: x,
+      y2: y,
+      tx,
+      ty,
+      name: field.name.substring(0, 4)
+    };
+  });
+
+  // 印刷時と画面時のグリッド線の色の調整
+  const strokeColor = isPrint ? 'rgba(0,0,0,0.18)' : 'rgba(100,116,139,0.2)';
+  const polygonColor = 'rgba(16,185,129,0.15)';
+  const strokePolygonColor = '#10b981';
+
+  return (
+    <svg width="100%" height="100%" viewBox={`0 0 ${size} ${size}`}>
+      {/* 同心円 */}
+      {grids.map(g => (
+        <circle
+          key={g}
+          cx={center}
+          cy={center}
+          r={radius * (g / 5)}
+          fill="none"
+          stroke={strokeColor}
+          strokeWidth="0.8"
+        />
+      ))}
+
+      {/* 放射軸線 */}
+      {axisLines.map((axis, i) => (
+        <g key={i}>
+          <line
+            x1={center}
+            y1={center}
+            x2={axis.x2}
+            y2={axis.y2}
+            stroke={strokeColor}
+            strokeWidth="0.8"
+          />
+          <text
+            x={axis.tx}
+            y={axis.ty}
+            textAnchor="middle"
+            fontSize="7"
+            fontWeight="bold"
+            fill={isPrint ? "#000" : "#64748b"}
+          >
+            {axis.name}
+          </text>
+        </g>
+      ))}
+
+      {/* 評価多角形プロット */}
+      <polygon
+        points={polygonPointsStr}
+        fill={polygonColor}
+        stroke={strokePolygonColor}
+        strokeWidth="1.8"
+      />
+    </svg>
+  );
+}
+
+// ────────────────────────────────────────────────────────
+// MARK: - 新規登録・編集用モーダル
+// ────────────────────────────────────────────────────────
+interface AddEditModalProps {
+  candidate: Candidate | null;
+  evalFields: EvalField[];
+  statusOptions: string[];
+  commuteOptions: string[];
+  periodOptions: string[];
+  allTags: string[];
+  onClose: () => void;
+  onSave: (c: Candidate) => void;
+}
+
+function AddEditModalComponent({
+  candidate,
+  evalFields,
+  statusOptions,
+  commuteOptions,
+  periodOptions,
+  allTags,
+  onClose,
+  onSave
+}: AddEditModalProps) {
+  
+  const [name, setName] = useState('');
+  const [age, setAge] = useState('');
+  const [job, setJob] = useState('');
+  const [phone, setPhone] = useState('');
+  const [address, setAddress] = useState('');
+  const [interviewDate, setInterviewDate] = useState('');
+  
+  const [selectedWeekdays, setSelectedWeekdays] = useState<string[]>([]);
+  const [weeklyDays, setWeeklyDays] = useState<string>('未設定 (タップで選択)');
+  const [hoursWeekday, setHoursWeekday] = useState('');
+  const [hoursWeekend, setHoursWeekend] = useState('');
+  const [commute, setCommute] = useState('徒歩');
+  const [period, setPeriod] = useState('長期可能 (1年以上)');
+  
+  const [evalScores, setEvalScores] = useState<{ [key: string]: number }>({});
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [status, setStatus] = useState('検討中');
+  const [notes, setNotes] = useState('');
+
+  // 1タップセレクト用
+  const [showingDaysPicker, setShowingDaysPicker] = useState(false);
+  const daysOptions = [
+    "週1日", "週1〜2日", "週2日", "週2〜3日", "週3日",
+    "週3〜4日", "週4日", "週4〜5日", "週5日以上",
+    "土日のみ", "平日のみ", "不定期・要相談"
+  ];
+
+  // 初期値セット
+  useEffect(() => {
+    if (candidate) {
+      setName(candidate.name);
+      setAge(String(candidate.age));
+      setJob(candidate.job);
+      setPhone(candidate.phone);
+      setAddress(candidate.address);
+      setInterviewDate(candidate.interviewDate);
+      setSelectedWeekdays(candidate.weekdays);
+      setWeeklyDays(candidate.weeklyDays);
+      setHoursWeekday(candidate.hoursWeekday);
+      setHoursWeekend(candidate.hoursWeekend);
+      setCommute(candidate.commute);
+      setPeriod(candidate.period);
+      setEvalScores(candidate.eval);
+      setSelectedTags(candidate.tags);
+      setStatus(candidate.status);
+      setNotes(candidate.notes);
+    } else {
+      // 登録時の初期設定値
+      setInterviewDate(new Date().toISOString().split('T')[0]);
+      const initialScores: { [key: string]: number } = {};
+      evalFields.forEach(f => {
+        initialScores[f.id] = 3;
+      });
+      setEvalScores(initialScores);
+    }
+  }, [candidate, evalFields]);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim()) return;
+
+    const data: Candidate = {
+      id: candidate?.id || `candidate-${Date.now()}`,
+      name: name.trim(),
+      age: Number(age) || 18,
+      job: job.trim() || 'フリーター',
+      phone: phone.trim(),
+      address: address.trim(),
+      weekdays: selectedWeekdays,
+      weeklyDays: weeklyDays === '未設定 (タップで選択)' ? '週3〜4日' : weeklyDays,
+      hoursWeekday,
+      hoursWeekend,
+      commute,
+      period,
+      eval: evalScores,
+      tags: selectedTags,
+      status,
+      notes,
+      createdAt: candidate?.createdAt || Date.now()
+    };
+    onSave(data);
+  };
+
+  const handleWeekdayToggle = (day: string) => {
+    if (selectedWeekdays.includes(day)) {
+      setSelectedWeekdays(selectedWeekdays.filter(d => d !== day));
+    } else {
+      setSelectedWeekdays([...selectedWeekdays, day]);
+    }
+  };
+
+  const handleTagToggle = (tag: string) => {
+    if (selectedTags.includes(tag)) {
+      setSelectedTags(selectedTags.filter(t => t !== tag));
+    } else {
+      setSelectedTags([...selectedTags, tag]);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 flex items-center justify-center p-3 sm:p-5 overflow-y-auto">
+      <div className="bg-white rounded-xl border border-slate-200 shadow-2xl w-full max-w-2xl max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-150">
+        
+        {/* ヘッダー */}
+        <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
+          <h3 className="text-sm font-extrabold text-slate-800 flex items-center gap-1.5">
+            <UserPlus className="w-4.5 h-4.5 text-emerald-500" />
+            <span>{candidate ? "面接候補者データの編集" : "新規面接候補者 登録"}</span>
+          </h3>
+          <button 
+            onClick={onClose}
+            className="w-7 h-7 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center transition"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* フォーム中身 */}
+        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-5 space-y-4 text-xs">
+          
+          {/* セクション1: 基本情報 */}
+          <div className="space-y-2.5 border-b border-slate-100 pb-3.5">
+            <h4 className="text-4xs font-black text-emerald-600 uppercase tracking-widest flex items-center gap-1">
+              <span className="w-1 h-2.5 bg-emerald-500 rounded-full" />
+              1. 候補者の基本情報
+            </h4>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-4xs text-slate-400 mb-1 font-bold">氏名 <span className="text-rose-500">*</span></label>
+                <input 
+                  type="text" 
+                  required 
+                  placeholder="例：鈴木 実" 
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-md text-xs text-slate-800 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="block text-4xs text-slate-400 mb-1 font-bold">年齢 <span className="text-rose-500">*</span></label>
+                <input 
+                  type="number" 
+                  required 
+                  min="15" 
+                  max="80" 
+                  placeholder="例：20" 
+                  value={age}
+                  onChange={e => setAge(e.target.value)}
+                  className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-md text-xs text-slate-800 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="block text-4xs text-slate-400 mb-1 font-bold">学校 / 職業 <span className="text-rose-500">*</span></label>
+                <input 
+                  type="text" 
+                  required 
+                  placeholder="例：〇〇大学 2年" 
+                  value={job}
+                  onChange={e => setJob(e.target.value)}
+                  className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-md text-xs text-slate-800 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-4xs text-slate-400 mb-1 font-bold">面接日</label>
+                <input 
+                  type="date" 
+                  value={interviewDate}
+                  onChange={e => setInterviewDate(e.target.value)}
+                  className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-md text-xs text-slate-800 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="block text-4xs text-slate-400 mb-1 font-bold">電話番号</label>
+                <input 
+                  type="tel" 
+                  placeholder="例：090-0000-0000" 
+                  value={phone}
+                  onChange={e => setPhone(e.target.value)}
+                  className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-md text-xs text-slate-800 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+              <div className="col-span-1 sm:col-span-2">
+                <label className="block text-4xs text-slate-400 mb-1 font-bold">現住所</label>
+                <input 
+                  type="text" 
+                  placeholder="例：伊万里市蓮池町◯-◯" 
+                  value={address}
+                  onChange={e => setAddress(e.target.value)}
+                  className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-md text-xs text-slate-800 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* セクション2: 勤務条件希望 */}
+          <div className="space-y-2.5 border-b border-slate-100 pb-3.5">
+            <h4 className="text-4xs font-black text-emerald-600 uppercase tracking-widest flex items-center gap-1">
+              <span className="w-1 h-2.5 bg-emerald-500 rounded-full" />
+              2. シフト希望・条件
+            </h4>
+            
+            <div className="space-y-2">
+              <div>
+                <label className="block text-4xs text-slate-400 mb-1.5 font-bold">勤務可能曜日（タップトグル）</label>
+                <div className="flex gap-1.5">
+                  {["月", "火", "水", "木", "金", "土", "日"].map(day => {
+                    const isSel = selectedWeekdays.includes(day);
+                    return (
+                      <button
+                        type="button"
+                        key={day}
+                        onClick={() => handleWeekdayToggle(day)}
+                        className={`flex-1 py-1.5 text-center font-bold border rounded-md transition ${isSel ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                      >
+                        {day}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                <div>
+                  <label className="block text-4xs text-slate-400 mb-1 font-bold">希望日数</label>
+                  <button
+                    type="button"
+                    onClick={() => setShowingDaysPicker(true)}
+                    className="w-full text-left px-3 py-2 bg-slate-50 border border-slate-300 rounded-md text-xs text-emerald-600 font-bold hover:bg-slate-100 transition"
+                  >
+                    {weeklyDays}
+                  </button>
+                </div>
+                <div>
+                  <label className="block text-4xs text-slate-400 mb-1 font-bold">希望時間帯 (平日)</label>
+                  <input 
+                    type="text" 
+                    placeholder="例：17:00〜22:00" 
+                    value={hoursWeekday}
+                    onChange={e => setHoursWeekday(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-md text-xs text-slate-800 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-4xs text-slate-400 mb-1 font-bold">希望時間帯 (土日祝)</label>
+                  <input 
+                    type="text" 
+                    placeholder="例：10:00〜21:00" 
+                    value={hoursWeekend}
+                    onChange={e => setHoursWeekend(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-md text-xs text-slate-800 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                <div>
+                  <label className="block text-4xs text-slate-400 mb-1 font-bold">通勤方法</label>
+                  <select
+                    value={commute}
+                    onChange={e => setCommute(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-md text-xs text-slate-800 focus:outline-none cursor-pointer"
+                  >
+                    {commuteOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-4xs text-slate-400 mb-1 font-bold">希望勤務期間</label>
+                  <select
+                    value={period}
+                    onChange={e => setPeriod(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-md text-xs text-slate-800 focus:outline-none cursor-pointer"
+                  >
+                    {periodOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* セクション3: 5段階評価入力 */}
+          <div className="space-y-2.5 border-b border-slate-100 pb-3.5">
+            <h4 className="text-4xs font-black text-emerald-600 uppercase tracking-widest flex items-center gap-1">
+              <span className="w-1 h-2.5 bg-emerald-500 rounded-full" />
+              3. 面接詳細評価 (1〜5段階)
+            </h4>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {evalFields.map(field => {
+                const score = evalScores[field.id] ?? 3;
+                return (
+                  <div key={field.id} className="flex items-center justify-between p-2 border border-slate-100 rounded-lg bg-slate-50/50">
+                    <span className="font-bold text-slate-700">{field.name}</span>
+                    <div className="flex gap-1">
+                      {[1, 2, 3, 4, 5].map(num => (
+                        <button
+                          type="button"
+                          key={num}
+                          onClick={() => setEvalScores({ ...evalScores, [field.id]: num })}
+                          className={`w-7 h-7 rounded-full text-3xs font-black border transition ${score === num ? 'bg-emerald-500 text-white border-emerald-500 scale-105 shadow-sm' : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'}`}
+                        >
+                          {num}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* セクション4: タグ選択 & ステータス */}
+          <div className="space-y-2.5 border-b border-slate-100 pb-3.5">
+            <h4 className="text-4xs font-black text-emerald-600 uppercase tracking-widest flex items-center gap-1">
+              <span className="w-1 h-2.5 bg-emerald-500 rounded-full" />
+              4. 属性タグ ＆ ステータス
+            </h4>
+
+            <div>
+              <label className="block text-4xs text-slate-400 mb-1.5 font-bold">属性タグ（複数選択可）</label>
+              <div className="flex flex-wrap gap-1.5">
+                {allTags.map(tag => {
+                  const isSel = selectedTags.includes(tag);
+                  return (
+                    <button
+                      type="button"
+                      key={tag}
+                      onClick={() => handleTagToggle(tag)}
+                      className={`px-3 py-1 border rounded-md font-bold text-3xs transition ${isSel ? 'bg-emerald-50 text-emerald-600 border-emerald-300' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}
+                    >
+                      # {tag}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="pt-1">
+              <label className="block text-4xs text-slate-400 mb-1.5 font-bold">採用状況選考ステータス</label>
+              <div className="grid grid-cols-5 gap-1.5">
+                {statusOptions.map(opt => {
+                  const isSel = status === opt;
+                  return (
+                    <button
+                      type="button"
+                      key={opt}
+                      onClick={() => setStatus(opt)}
+                      className={`py-2 text-3xs font-black rounded-lg border text-center transition ${isSel ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}
+                    >
+                      {opt}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* セクション5: メモ特記事項 */}
+          <div className="space-y-2.5">
+            <h4 className="text-4xs font-black text-emerald-600 uppercase tracking-widest flex items-center gap-1">
+              <span className="w-1 h-2.5 bg-emerald-500 rounded-full" />
+              5. 特記事項・自由記入
+            </h4>
+            <textarea 
+              rows={3}
+              placeholder="「笑顔がよく、元気に挨拶ができていた」「主婦仲間とのコミュニティあり」「ランチピーク帯週4日固定可能」など店長の見解をメモ..."
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              className="w-full p-2.5 border border-slate-300 rounded-lg text-xs text-slate-800 bg-white focus:outline-none focus:border-emerald-500 placeholder-slate-400"
+            />
+          </div>
+
+          {/* フッター */}
+          <div className="pt-2 flex justify-end gap-2 border-t border-slate-100 shrink-0">
+            <button 
+              type="button" 
+              onClick={onClose}
+              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg font-bold"
+            >
+              キャンセル
+            </button>
+            <button 
+              type="submit"
+              className="px-5 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg font-bold shadow-sm shadow-emerald-500/10"
+            >
+              保存する
+            </button>
+          </div>
+        </form>
+      </div>
+
+      {/* 希望日数セレクトモーダル（ポップアップ重なり） */}
+      {showingDaysPicker && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-xs w-full overflow-hidden animate-in zoom-in duration-100 border border-slate-200">
+            <div className="p-3 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
+              <span className="font-extrabold text-slate-800 text-xs">希望日数の選択</span>
+              <button 
+                type="button" 
+                onClick={() => setShowingDaysPicker(false)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="max-h-60 overflow-y-auto divide-y divide-slate-100 text-xs">
+              {daysOptions.map(opt => (
+                <button
+                  type="button"
+                  key={opt}
+                  onClick={() => {
+                    setWeeklyDays(opt);
+                    showingDaysPicker ? setShowingDaysPicker(false) : null;
+                  }}
+                  className="w-full px-4 py-2.5 text-left hover:bg-slate-50 flex justify-between items-center"
+                >
+                  <span className={weeklyDays === opt ? "font-bold text-emerald-600" : "text-slate-700"}>
+                    {opt}
+                  </span>
+                  {weeklyDays === opt && <Check className="w-3.5 h-3.5 text-emerald-500" />}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────
+// MARK: - 項目設定・管理用モーダル
+// ────────────────────────────────────────────────────────
+interface SettingsModalProps {
+  evalFields: EvalField[];
+  onClose: () => void;
+  onSaveFields: (updated: EvalField[]) => void;
+  triggerToast: (msg: string) => void;
+}
+
+function SettingsModalComponent({
+  evalFields,
+  onClose,
+  onSaveFields,
+  triggerToast
+}: SettingsModalProps) {
+
+  const [newFieldName, setNewFieldName] = useState('');
+  const [selectedIcon, setSelectedIcon] = useState('star');
+  const [fieldsList, setFieldsList] = useState<EvalField[]>([]);
+
+  // 削除用の状態（設定画面の上にシームレスに重なる）
+  const [showingFieldDeleteConfirm, setShowingFieldDeleteConfirm] = useState<boolean>(false);
+  const [fieldToDelete, setFieldToDelete] = useState<EvalField | null>(null);
+
+  useEffect(() => {
+    setFieldsList(evalFields);
+  }, [evalFields]);
+
+  const iconOptions = [
+    'star', 'smile', 'message-square', 'sparkles', 'shield-check', 'zap', 'briefcase', 'clock', 'calendar'
+  ];
+
+  const handleAddField = () => {
+    const trimmed = newFieldName.trim();
+    if (!trimmed) return;
+
+    const newField: EvalField = {
+      id: `custom-${Date.now()}`,
+      name: trimmed,
+      icon: selectedIcon
+    };
+
+    const updated = [...fieldsList, newField];
+    setFieldsList(updated);
+    onSaveFields(updated);
+    setNewFieldName('');
+  };
+
+  const handleDeleteFieldClick = (field: EvalField) => {
+    if (fieldsList.count <= 3) {
+      triggerToast("評価項目は最低3つ以上必要です");
+      return;
+    }
+    setFieldToDelete(field);
+    setShowingFieldDeleteConfirm(true);
+  };
+
+  const confirmDeleteField = () => {
+    if (!fieldToDelete) return;
+    const updated = fieldsList.filter(f => f.id !== fieldToDelete.id);
+    setFieldsList(updated);
+    onSaveFields(updated);
+    setShowingFieldDeleteConfirm(false);
+    setFieldToDelete(null);
+    triggerToast(`「${fieldToDelete.name}」項目を削除しました`);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 flex items-center justify-center p-3 sm:p-5 overflow-y-auto">
+      
+      {/* 項目設定ダイアログ本体 */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-2xl w-full max-w-md max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-150 relative">
+        
+        {/* ヘッダー */}
+        <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
+          <h3 className="text-sm font-extrabold text-slate-800 flex items-center gap-1.5">
+            <Settings className="w-4.5 h-4.5 text-slate-500" />
+            <span>面接評価項目の設定</span>
+          </h3>
+          <button 
+            onClick={onClose}
+            className="w-7 h-7 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center transition"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* コンテンツリスト */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-4 text-xs">
+          
+          {/* 現在の項目リスト */}
+          <div className="space-y-2">
+            <span className="block text-4xs font-bold text-slate-400 uppercase tracking-wider">
+              登録済みの項目 (最低3つ必須)
+            </span>
+            <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
+              {fieldsList.map(field => {
+                const IconComponent = iconMap[field.icon] || Star;
+                return (
+                  <div key={field.id} className="flex items-center justify-between p-2 border border-slate-150 rounded-lg bg-slate-50">
+                    <span className="flex items-center gap-2 font-bold text-slate-700">
+                      <IconComponent className="w-4 h-4 text-emerald-500" />
+                      {field.name}
+                    </span>
+                    <button
+                      type="button"
+                      title="本当に削除しますか？"
+                      onClick={() => handleDeleteFieldClick(field)}
+                      className="p-1 text-rose-500 hover:bg-rose-50 rounded border border-rose-200 transition"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 新規追加セクション */}
+          <div className="border-t border-slate-100 pt-3.5 space-y-3">
+            <span className="block text-4xs font-bold text-slate-400 uppercase tracking-wider">
+              新しい項目を追加
+            </span>
+            
+            <div className="space-y-2">
+              <input 
+                type="text" 
+                placeholder="例：接客経験の有無" 
+                value={newFieldName}
+                onChange={e => setNewFieldName(e.target.value)}
+                className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-md text-xs text-slate-800 focus:outline-none focus:border-emerald-500"
+              />
+
+              {/* アイコンセレクタ */}
+              <div className="space-y-1">
+                <span className="block text-4xs text-slate-400 font-bold">表現アイコンの選択</span>
+                <div className="grid grid-cols-5 gap-1.5 pt-1">
+                  {iconOptions.map(icon => {
+                    const IconComp = iconMap[icon];
+                    return (
+                      <button
+                        type="button"
+                        key={icon}
+                        onClick={() => setSelectedIcon(icon)}
+                        className={`py-2 flex items-center justify-center rounded-lg border transition ${selectedIcon === icon ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}
+                      >
+                        {IconComp && <IconComp className="w-4 h-4" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleAddField}
+                disabled={!newFieldName.trim()}
+                className={`w-full py-2 rounded-lg font-bold text-xs text-white transition ${newFieldName.trim() ? 'bg-emerald-500 hover:bg-emerald-600 shadow-sm' : 'bg-slate-300 cursor-not-allowed'}`}
+              >
+                新しい項目を追加
+              </button>
+            </div>
+          </div>
+
+        </div>
+
+        {/* 完了ボタン */}
+        <div className="p-4 bg-slate-50 border-t border-slate-150 flex justify-end shrink-0">
+          <button 
+            onClick={onClose}
+            className="px-5 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg font-bold text-xs transition"
+          >
+            設定完了
+          </button>
+        </div>
+
+        {/* ⚙️設定モーダルの真上にシームレスに重なるカスタム確認ダイアログ */}
+        {showingFieldDeleteConfirm && fieldToDelete && (
+          <div className="absolute inset-0 bg-black/55 z-[70] flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl border border-slate-200 shadow-2xl max-w-[270px] w-full overflow-hidden animate-in zoom-in duration-150">
+              <div className="p-4 text-center space-y-2">
+                <div className="w-10 h-10 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center mx-auto border border-rose-200">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <h4 className="text-xs font-bold text-slate-900">本当に削除しますか？</h4>
+                <p className="text-4xs text-slate-500 leading-relaxed">
+                  項目「{fieldToDelete.name}」を削除しますか？<br />過去データでもこの項目は非表示になります。
+                </p>
+              </div>
+              <div className="border-t border-slate-100 flex divide-x divide-slate-100 text-xs">
+                <button 
+                  onClick={() => setShowingFieldDeleteConfirm(false)}
+                  className="flex-1 py-2.5 text-center text-slate-600 font-bold hover:bg-slate-50"
+                >
+                  キャンセル
+                </button>
+                <button 
+                  onClick={confirmDeleteField}
+                  className="flex-1 py-2.5 text-center text-rose-600 font-bold hover:bg-rose-50"
+                >
+                  削除する
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────
+// CSS・カラーマッピングユーティリティ
+// ────────────────────────────────────────────────────────
+function getStatusColorClass(status: string) {
+  switch (status) {
+    case '面接予定': return 'bg-blue-500';
+    case '検討中': return 'bg-orange-400';
+    case '採用': return 'bg-emerald-500';
+    case '不採用': return 'bg-rose-500';
+    default: return 'bg-slate-400';
+  }
+}
+
+function getStatusBadgeClass(status: string) {
+  switch (status) {
+    case '面接予定': return 'bg-blue-50 text-blue-600 border-blue-200';
+    case '検討中': return 'bg-orange-50 text-orange-600 border-orange-200';
+    case '採用': return 'bg-emerald-50 text-emerald-600 border-emerald-200';
+    case '不採用': return 'bg-rose-50 text-rose-600 border-rose-200';
+    default: return 'bg-slate-100 text-slate-600 border-slate-300';
+  }
+}s
